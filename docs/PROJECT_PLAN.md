@@ -37,13 +37,13 @@ Android スマホ用アプリを開発する。アプリを起動するとカメ
 
 ## 進捗
 - [x] Android Studio インストール（winget）
-- [ ] Android Studio 初回セットアップ（Standard、SDK / Platform-Tools のダウンロード）
-- [ ] スマホで USB デバッグ有効化・PC を許可
-- [ ] プロジェクト作成（Kotlin + Compose）
-- [ ] CameraX プレビュー表示
-- [ ] ML Kit によるQR検出と枠描画
-- [ ] 履歴リスト表示
-- [ ] 実機（Pixel 8a）で動作確認
+- [x] Android Studio 初回セットアップ（Standard、SDK / Platform-Tools のダウンロード）
+- [x] スマホで USB デバッグ有効化・PC を許可
+- [x] プロジェクト作成（Kotlin + Compose）
+- [x] CameraX プレビュー表示
+- [x] ML Kit によるQR検出と枠描画
+- [x] 履歴リスト表示（`assembleDebug` ビルド成功まで確認済み）
+- [x] 実機（Pixel 8a）で動作確認
 
 ## 別PCで続きを行う場合の手順
 1. リポジトリを clone する: `git clone https://github.com/knomu1/AndroidDevelop.git`
