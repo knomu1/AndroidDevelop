@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -105,11 +107,33 @@ private fun ScannerScreen(vm: ScannerViewModel) {
     val detections by vm.detections.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
     val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    var showSamples by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showVersionHistory by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("QR Scanner v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleSmall)
+            Box {
+                TextButton(onClick = { showMenu = true }) { Text("メニュー") }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("バージョン履歴") },
+                        onClick = {
+                            showMenu = false
+                            showVersionHistory = true
+                        },
+                    )
+                }
+            }
+        }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             CameraPreview(onBarcodes = vm::onBarcodes)
-            // 検出したQRの枠
+            // 検出したバーコードの枠
             Canvas(modifier = Modifier.fillMaxSize()) {
                 detections.forEach { detection ->
                     if (detection.corners.size < 3) return@forEach
@@ -129,7 +153,10 @@ private fun ScannerScreen(vm: ScannerViewModel) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("履歴 ${history.size} 件", style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = vm::clearHistory, enabled = history.isNotEmpty()) { Text("クリア") }
+            Row {
+                TextButton(onClick = { showSamples = true }) { Text("サンプル") }
+                TextButton(onClick = vm::clearHistory, enabled = history.isNotEmpty()) { Text("クリア") }
+            }
         }
         HorizontalDivider()
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -142,13 +169,20 @@ private fun ScannerScreen(vm: ScannerViewModel) {
                 ) {
                     Text(item.value, style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        timeFormat.format(Date(item.firstSeenAt)),
+                        "${formatLabel(item.format)}  ${timeFormat.format(Date(item.firstSeenAt))}",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 HorizontalDivider()
             }
         }
+    }
+
+    if (showSamples) {
+        SampleBarcodeDialog(onDismiss = { showSamples = false })
+    }
+    if (showVersionHistory) {
+        VersionHistoryDialog(onDismiss = { showVersionHistory = false })
     }
 }
 
@@ -161,7 +195,7 @@ private fun CameraPreview(onBarcodes: (List<Barcode>) -> Unit) {
     val scanner: BarcodeScanner = remember {
         BarcodeScanning.getClient(
             BarcodeScannerOptions.Builder()
-                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                .setBarcodeFormats(Barcode.FORMAT_ALL_FORMATS)
                 .build()
         )
     }
