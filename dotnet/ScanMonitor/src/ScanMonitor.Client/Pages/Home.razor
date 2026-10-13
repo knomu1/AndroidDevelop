@@ -1,0 +1,146 @@
+@page "/"
+@using Microsoft.AspNetCore.SignalR.Client
+@using ScanMonitor.Contracts
+@inject HttpClient Http
+@inject NavigationManager Nav
+@implements IAsyncDisposable
+
+<PageTitle>ScanMonitor</PageTitle>
+
+<div class="header">
+    <h1>ScanMonitor</h1>
+    <span class="status @(_connected ? "ok" : "ng")">@(_connected ? "● 接続中" : "● 切断")</span>
+    <span>受信 @_records.Count 件</span>
+    <button @onclick="Clear">表示をクリア</button>
+</div>
+
+<details class="pairing" open>
+    <summary>Android 接続用 QR</summary>
+    @if (_pairing is null)
+    {
+        <p>接続情報を取得中...</p>
+    }
+    else
+    {
+        <div class="pairing-body">
+            <img class="qr" src="@($"{ScanRoutes.PairingQr}?v={_qrVersion}")" alt="pairing qr" />
+            <div>
+                <p>Android アプリでこの QR を読み取ると、自動的に接続先が設定されます。</p>
+                <p>PC名: <strong>@_pairing.Name</strong></p>
+                <p>接続候補:</p>
+                <ul>
+                    @foreach (var u in _pairing.Urls)
+                    {
+                        <li>@u</li>
+                    }
+                </ul>
+                @if (_pairing.Urls.Count == 0)
+                {
+                    <p class="warn">接続候補がありません。ネットワーク（USBテザリング）を確認してください。</p>
+                }
+            </div>
+        </div>
+    }
+</details>
+
+@if (_records.Count == 0)
+{
+    <p>まだ受信データがありません。Android から送信すると、ここにリアルタイムで表示されます。</p>
+}
+
+<div class="cards">
+    @foreach (var r in _records)
+    {
+        <div class="card" @key="r.Id">
+            <div class="image-wrap">
+                <img src="@r.ImageUrl" alt="scan" />
+                <svg viewBox="0 0 @r.ImageWidth @r.ImageHeight" preserveAspectRatio="none">
+                    @foreach (var c in r.Codes)
+                    {
+                        <polygon points="@string.Join(' ', c.Corners.Select(p => $"{p.X},{p.Y}"))" />
+                    }
+                </svg>
+            </div>
+            <div class="meta">
+                <strong>@r.DeviceId</strong>
+                <span>@r.ReceivedAt.LocalDateTime.ToString("HH:mm:ss")</span>
+            </div>
+            <ul>
+                @foreach (var c in r.Codes)
+                {
+                    <li><span class="fmt">@c.Format</span> @c.Value</li>
+                }
+            </ul>
+        </div>
+    }
+</div>
+
+@code {
+    private readonly List<ScanRecord> _records = new();
+    private HubConnection? _hub;
+    private bool _connected;
+    private PairingInfo? _pairing;
+    private int _qrVersion;
+    private System.Threading.Timer? _pairingTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _hub = new HubConnectionBuilder()
+            .WithUrl(Nav.ToAbsoluteUri(ScanRoutes.Hub))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hub.On<ScanRecord>(ScanRoutes.ReceivedEvent, async record =>
+        {
+            _records.Insert(0, record);
+            await InvokeAsync(StateHasChanged);
+        });
+        _hub.Reconnecting += _ => SetConnected(false);
+        _hub.Reconnected += _ => SetConnected(true);
+        _hub.Closed += _ => SetConnected(false);
+
+        // 初期表示: 直近の受信分（新しい順）を読み込む
+        var recent = await Http.GetFromJsonAsync<List<ScanRecord>>(ScanRoutes.Upload);
+        if (recent is not null) _records.AddRange(recent);
+
+        await RefreshPairing();
+        // USB テザリングの有効化/無効化に追従するため、接続情報を定期的に更新する
+        _pairingTimer = new System.Threading.Timer(
+            async _ => await RefreshPairing(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+
+        await _hub.StartAsync();
+        _connected = true;
+    }
+
+    private async Task RefreshPairing()
+    {
+        try
+        {
+            var info = await Http.GetFromJsonAsync<PairingInfo>(ScanRoutes.Pairing);
+            if (info is not null && info.Payload != _pairing?.Payload)
+            {
+                _pairing = info;
+                _qrVersion++;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // サーバー停止中などは次回に再試行
+        }
+    }
+
+    private async Task SetConnected(bool value)
+    {
+        _connected = value;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void Clear() => _records.Clear();
+
+    public async ValueTask DisposeAsync()
+    {
+        _pairingTimer?.Dispose();
+        if (_hub is not null) await _hub.DisposeAsync();
+    }
+}

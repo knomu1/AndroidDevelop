@@ -1,4 +1,4 @@
-# Android アプリ開発
+﻿# Android アプリ開発
 
 複数の Android アプリを 1 つの Gradle ビルド（マルチモジュール）で管理するリポジトリ。
 
@@ -8,6 +8,7 @@ settings.gradle.kts        # include でアプリを登録
 gradle/libs.versions.toml  # 依存・プラグインのバージョン一元管理
 apps/<アプリ名>/           # 各アプリ（1 アプリ = 1 モジュール）
 libs/                      # 複数アプリで共有するもの（必要になったら追加）
+dotnet/<名前>/             # 検証用 .NET アプリ（サーバー等）
 docs/                      # ドキュメント
 ```
 
@@ -25,3 +26,9 @@ docs/                      # ドキュメント
 - `JAVA_HOME` は Android Studio 同梱 JBR を指定: `C:\Program Files\Android\Android Studio\jbr`
 - ビルド: `gradlew :apps:qrscanner:assembleDebug`
 - インストール: `adb install -r apps/qrscanner/build/outputs/apk/debug/qrscanner-debug.apk`
+
+## .NET 検証アプリ
+| 名前 | 場所 | 概要 | ドキュメント |
+|---|---|---|---|
+| ScanMonitor | `dotnet/ScanMonitor` | Android から画像+データを受信し Blazor WASM にリアルタイム表示 | [scanmonitor.md](scanmonitor.md) |
+

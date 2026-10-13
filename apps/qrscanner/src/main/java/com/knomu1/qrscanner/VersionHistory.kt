@@ -16,6 +16,16 @@ private data class VersionEntry(val name: String, val code: Int, val date: Strin
 
 private val versionHistory = listOf(
     VersionEntry(
+        name = "0.4.0",
+        code = 4,
+        date = "2026-10-13",
+        changes = listOf(
+            "PC の接続用 QR を読み取って接続先を自動設定（アドレス入力不要）",
+            "新規に読み取ったコードを画像付きで ScanMonitor サーバーへ自動送信",
+            "接続状態の表示と接続解除メニューを追加",
+        ),
+    ),
+    VersionEntry(
         name = "0.3.0",
         code = 3,
         date = "2026-10-12",

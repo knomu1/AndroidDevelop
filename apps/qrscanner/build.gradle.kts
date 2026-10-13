@@ -11,8 +11,8 @@ android {
         applicationId = "com.knomu1.qrscanner"
         minSdk = 26
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     buildTypes {
@@ -45,4 +45,5 @@ dependencies {
 
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.zxing.core)
+    implementation(libs.okhttp)
 }

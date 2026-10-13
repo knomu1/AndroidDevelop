@@ -8,7 +8,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.mlkit.vision.MlKitAnalyzer
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import android.util.Size
+import com.google.mlkit.vision.common.InputImage
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.geometry.Offset
 import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
@@ -47,6 +58,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import kotlin.math.max
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -104,7 +116,11 @@ private fun QrApp(vm: ScannerViewModel = viewModel()) {
 
 @Composable
 private fun ScannerScreen(vm: ScannerViewModel) {
-    val detections by vm.detections.collectAsStateWithLifecycle()
+    val frame by vm.frame.collectAsStateWithLifecycle()
+    val connection by vm.connection.collectAsStateWithLifecycle()
+    val pairing by vm.pairing.collectAsStateWithLifecycle()
+    val sentCount by vm.sentCount.collectAsStateWithLifecycle()
+    val pendingCount by vm.pendingCount.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
     val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     var showSamples by remember { mutableStateOf(false) }
@@ -131,15 +147,27 @@ private fun ScannerScreen(vm: ScannerViewModel) {
                 }
             }
         }
+        ConnectionBar(
+            connection = connection,
+            sentCount = sentCount,
+            pendingCount = pendingCount,
+            onForget = vm::forgetServer,
+        )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            CameraPreview(onBarcodes = vm::onBarcodes)
-            // 検出したバーコードの枠
+            CameraPreview(vm)
+            // 検出したバーコードの枠（画像座標 → FILL_CENTER のプレビュー座標へ変換）
             Canvas(modifier = Modifier.fillMaxSize()) {
-                detections.forEach { detection ->
+                if (frame.width == 0 || frame.height == 0) return@Canvas
+                val scale = max(size.width / frame.width, size.height / frame.height)
+                val dx = (size.width - frame.width * scale) / 2f
+                val dy = (size.height - frame.height * scale) / 2f
+                fun map(p: Offset) = Offset(p.x * scale + dx, p.y * scale + dy)
+                frame.detections.forEach { detection ->
                     if (detection.corners.size < 3) return@forEach
+                    val corners = detection.corners.map(::map)
                     val path = Path().apply {
-                        moveTo(detection.corners.first().x, detection.corners.first().y)
-                        detection.corners.drop(1).forEach { lineTo(it.x, it.y) }
+                        moveTo(corners.first().x, corners.first().y)
+                        corners.drop(1).forEach { lineTo(it.x, it.y) }
                         close()
                     }
                     drawPath(path, Color(0xFF00E676), style = Stroke(width = 6f))
@@ -178,6 +206,11 @@ private fun ScannerScreen(vm: ScannerViewModel) {
         }
     }
 
+    PairingDialog(
+        state = pairing,
+        onConfirm = vm::confirmPairing,
+        onCancel = vm::cancelPairing,
+    )
     if (showSamples) {
         SampleBarcodeDialog(onDismiss = { showSamples = false })
     }
@@ -187,10 +220,92 @@ private fun ScannerScreen(vm: ScannerViewModel) {
 }
 
 @Composable
-private fun CameraPreview(onBarcodes: (List<Barcode>) -> Unit) {
+private fun ConnectionBar(
+    connection: ConnectionState,
+    sentCount: Int,
+    pendingCount: Int,
+    onForget: () -> Unit,
+) {
+    val (label, color) = when (connection) {
+        ConnectionState.NotPaired -> "未接続: PCの接続用QRを映してください" to Color(0xFF757575)
+        is ConnectionState.Connected -> "接続中: ${connection.name}" to Color(0xFF1B8F3A)
+        is ConnectionState.Unreachable -> "接続できません: ${connection.name}" to Color(0xFFC62828)
+        is ConnectionState.AuthFailed -> "認証エラー: ${connection.name}（QRを読み直してください）" to Color(0xFFC62828)
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column {
+            Text("● $label", color = color, style = MaterialTheme.typography.bodySmall)
+            if (connection != ConnectionState.NotPaired) {
+                Text(
+                    "送信済 $sentCount 件 / 待機 $pendingCount 件",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        if (connection != ConnectionState.NotPaired) {
+            TextButton(onClick = onForget) { Text("接続解除") }
+        }
+    }
+}
+
+@Composable
+private fun PairingDialog(state: PairingUiState, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    when (state) {
+        PairingUiState.Idle -> Unit
+        is PairingUiState.Confirm -> AlertDialog(
+            onDismissRequest = onCancel,
+            title = { Text("接続先を設定しますか？") },
+            text = { Text("PC名: ${state.payload.name}\n接続候補: ${state.payload.urls.size} 件") },
+            confirmButton = { TextButton(onClick = onConfirm) { Text("接続") } },
+            dismissButton = { TextButton(onClick = onCancel) { Text("キャンセル") } },
+        )
+        is PairingUiState.Connecting -> AlertDialog(
+            onDismissRequest = {},
+            title = { Text("接続を確認しています...") },
+            text = { Text("${state.payload.name} の接続候補 ${state.payload.urls.size} 件を確認中") },
+            confirmButton = {},
+        )
+        is PairingUiState.Failed -> AlertDialog(
+            onDismissRequest = onCancel,
+            title = { Text("接続できませんでした") },
+            text = {
+                Text(
+                    "${state.payload.name} のどの接続候補にも届きませんでした。\n" +
+                        "USBテザリングが有効か、PC のファイアウォールを確認してください。",
+                )
+            },
+            confirmButton = { TextButton(onClick = onConfirm) { Text("再試行") } },
+            dismissButton = { TextButton(onClick = onCancel) { Text("閉じる") } },
+        )
+    }
+}
+
+/** ImageProxy を回転補正した JPEG にする。 */
+private fun ImageProxy.toUprightJpeg(rotationDegrees: Int): ByteArray {
+    val source = toBitmap()
+    val upright = if (rotationDegrees == 0) {
+        source
+    } else {
+        Bitmap.createBitmap(
+            source, 0, 0, source.width, source.height,
+            Matrix().apply { postRotate(rotationDegrees.toFloat()) },
+            true,
+        )
+    }
+    return ByteArrayOutputStream().use { out ->
+        upright.compress(Bitmap.CompressFormat.JPEG, 80, out)
+        out.toByteArray()
+    }
+}
+
+@Composable
+private fun CameraPreview(vm: ScannerViewModel) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val currentOnBarcodes by rememberUpdatedState(onBarcodes)
 
     val scanner: BarcodeScanner = remember {
         BarcodeScanning.getClient(
@@ -202,22 +317,42 @@ private fun CameraPreview(onBarcodes: (List<Barcode>) -> Unit) {
     val controller = remember { LifecycleCameraController(context) }
 
     DisposableEffect(lifecycleOwner, controller, scanner) {
-        val executor = ContextCompat.getMainExecutor(context)
+        val executor = Executors.newSingleThreadExecutor()
         controller.setEnabledUseCases(CameraController.IMAGE_ANALYSIS)
-        controller.setImageAnalysisAnalyzer(
-            executor,
-            MlKitAnalyzer(
-                listOf(scanner),
-                ImageAnalysis.COORDINATE_SYSTEM_VIEW_REFERENCED,
-                executor,
-            ) { result ->
-                currentOnBarcodes(result.getValue(scanner).orEmpty())
-            },
+        controller.setImageAnalysisResolutionSelector(
+            ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                    ResolutionStrategy(Size(1280, 960), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
+                )
+                .build()
         )
+        controller.setImageAnalysisAnalyzer(executor) { imageProxy ->
+            val media = imageProxy.image
+            if (media == null) {
+                imageProxy.close()
+                return@setImageAnalysisAnalyzer
+            }
+            val rotation = imageProxy.imageInfo.rotationDegrees
+            val upright = rotation % 180 == 0
+            val width = if (upright) imageProxy.width else imageProxy.height
+            val height = if (upright) imageProxy.height else imageProxy.width
+
+            scanner.process(InputImage.fromMediaImage(media, rotation))
+                .addOnSuccessListener(executor) { barcodes ->
+                    val added = vm.onBarcodes(barcodes, width, height)
+                    if (added.isNotEmpty() && vm.isPaired) {
+                        runCatching { imageProxy.toUprightJpeg(rotation) }
+                            .onSuccess { vm.enqueueUpload(it, width, height, added) }
+                    }
+                }
+                .addOnCompleteListener(executor) { imageProxy.close() }
+        }
         controller.bindToLifecycle(lifecycleOwner)
         onDispose {
             controller.unbind()
             controller.clearImageAnalysisAnalyzer()
+            executor.shutdown()
             scanner.close()
         }
     }
