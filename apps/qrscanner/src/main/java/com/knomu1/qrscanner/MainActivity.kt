@@ -17,7 +17,9 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import android.util.Size
 import com.google.mlkit.vision.common.InputImage
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.geometry.Offset
 import androidx.camera.view.CameraController
@@ -126,6 +128,10 @@ private fun ScannerScreen(vm: ScannerViewModel) {
     var showSamples by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showVersionHistory by remember { mutableStateOf(false) }
+    var showScanSettings by remember { mutableStateOf(false) }
+    var showFormatPicker by remember { mutableStateOf(false) }
+    val scanSettings by vm.scanSettings.collectAsStateWithLifecycle()
+    val stats by vm.stats.collectAsStateWithLifecycle()
 
     Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
         Row(
@@ -137,6 +143,20 @@ private fun ScannerScreen(vm: ScannerViewModel) {
             Box {
                 TextButton(onClick = { showMenu = true }) { Text("メニュー") }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("読み取り対象のバーコード") },
+                        onClick = {
+                            showMenu = false
+                            showFormatPicker = true
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("読み取り設定") },
+                        onClick = {
+                            showMenu = false
+                            showScanSettings = true
+                        },
+                    )
                     DropdownMenuItem(
                         text = { Text("バージョン履歴") },
                         onClick = {
@@ -152,6 +172,12 @@ private fun ScannerScreen(vm: ScannerViewModel) {
             sentCount = sentCount,
             pendingCount = pendingCount,
             onForget = vm::forgetServer,
+        )
+        Text(
+            "確定 ${stats.confirmed} / 多数決で破棄 ${stats.discardedByVote} / 検証NG ${stats.rejectedInvalid}" +
+                "  （${scanSettings.windowFrames}フレーム中${scanSettings.effectiveRequired}回一致）",
+            modifier = Modifier.padding(start = 16.dp),
+            style = MaterialTheme.typography.bodySmall,
         )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             CameraPreview(vm)
@@ -170,7 +196,12 @@ private fun ScannerScreen(vm: ScannerViewModel) {
                         corners.drop(1).forEach { lineTo(it.x, it.y) }
                         close()
                     }
-                    drawPath(path, Color(0xFF00E676), style = Stroke(width = 6f))
+                    val color = when (detection.status) {
+                        DetectionStatus.Confirmed -> Color(0xFF00E676)
+                        DetectionStatus.Pending -> Color(0xFFFFD600)
+                        DetectionStatus.Invalid -> Color(0xFFFF1744)
+                    }
+                    drawPath(path, color, style = Stroke(width = 6f))
                 }
             }
         }
@@ -213,6 +244,23 @@ private fun ScannerScreen(vm: ScannerViewModel) {
     )
     if (showSamples) {
         SampleBarcodeDialog(onDismiss = { showSamples = false })
+    }
+    if (showFormatPicker) {
+        FormatPickerDialog(
+            enabledFormats = scanSettings.enabledFormats,
+            onChange = vm::updateScanSettings,
+            onDismiss = { showFormatPicker = false },
+        )
+    }
+    if (showScanSettings) {
+        ScanSettingsDialog(
+            settings = scanSettings,
+            stats = stats,
+            onChange = vm::updateScanSettings,
+            onResetStats = vm::resetStats,
+            onOpenFormats = { showFormatPicker = true },
+            onDismiss = { showScanSettings = false },
+        )
     }
     if (showVersionHistory) {
         VersionHistoryDialog(onDismiss = { showVersionHistory = false })
@@ -307,17 +355,27 @@ private fun CameraPreview(vm: ScannerViewModel) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    val scanner: BarcodeScanner = remember {
+    val enabledFormats by vm.scanSettings.collectAsStateWithLifecycle()
+    val formatKey = enabledFormats.enabledFormats
+    val scanner: BarcodeScanner = remember(formatKey) {
+        val formats = formatKey.toList()
         BarcodeScanning.getClient(
             BarcodeScannerOptions.Builder()
-                .setBarcodeFormats(Barcode.FORMAT_ALL_FORMATS)
+                .setBarcodeFormats(formats.first(), *formats.drop(1).toIntArray())
                 .build()
         )
     }
     val controller = remember { LifecycleCameraController(context) }
 
     DisposableEffect(lifecycleOwner, controller, scanner) {
-        val executor = Executors.newSingleThreadExecutor()
+        val pool = Executors.newSingleThreadExecutor()
+        // 破棄後に届く ML Kit の完了通知で RejectedExecutionException にならないよう、拒否は握りつぶす
+        val executor = Executor { task ->
+            try {
+                pool.execute(task)
+            } catch (_: RejectedExecutionException) {
+            }
+        }
         controller.setEnabledUseCases(CameraController.IMAGE_ANALYSIS)
         controller.setImageAnalysisResolutionSelector(
             ResolutionSelector.Builder()
@@ -352,7 +410,7 @@ private fun CameraPreview(vm: ScannerViewModel) {
         onDispose {
             controller.unbind()
             controller.clearImageAnalysisAnalyzer()
-            executor.shutdown()
+            pool.shutdown()
             scanner.close()
         }
     }

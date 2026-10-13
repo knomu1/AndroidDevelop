@@ -16,6 +16,26 @@ private data class VersionEntry(val name: String, val code: Int, val date: Strin
 
 private val versionHistory = listOf(
     VersionEntry(
+        name = "0.5.1",
+        code = 6,
+        date = "2026-10-13",
+        changes = listOf(
+            "読み取り対応バーコードの一覧画面を追加（種類・誤り検出・誤読リスク・用途を表示）",
+            "一覧から読み取り対象を選択（全て / 誤読しにくい形式のみ / QR のみ の一括選択つき）",
+        ),
+    ),
+    VersionEntry(
+        name = "0.5.0",
+        code = 5,
+        date = "2026-10-13",
+        changes = listOf(
+            "誤読対策: 複数フレームでの一致確認（N フレーム中 M 回一致で確定）を追加",
+            "誤読対策: JAN/UPC のチェックデジット、ITF の桁数、短すぎる値の検証を追加",
+            "読み取り設定: 形式ごとの有効/無効、検証・一致確認の設定を追加",
+            "検出枠を状態で色分け（緑=確定 / 黄=確認中 / 赤=検証NG）し、集計を表示",
+        ),
+    ),
+    VersionEntry(
         name = "0.4.0",
         code = 4,
         date = "2026-10-13",

@@ -18,7 +18,7 @@ Android --HTTP POST /api/scans (multipart: image + metadata JSON)--> Server
 Server  --SignalR /hubs/scans  "ScanReceived" (メタ情報のみ)-------> Blazor WASM
 Blazor  --GET /api/images/{id} (画像本体)---------------------------> Server
 ```
-- PC と Android は USB テザリング上の HTTP（平文）で接続する。
+- PC と Android は HTTP（平文）で接続する。USB テザリング、または同じ Wi-Fi / LAN のどちらでも使える（動作確認済み）。
 - Server は `http://0.0.0.0:5080` で待ち受け（`appsettings.json` の `Urls`）。
 
 ### metadata（JSON）
@@ -45,11 +45,15 @@ dotnet run --project src/ScanMonitor.Server
 curl.exe -F "metadata=<meta.json" -F "image=@t.jpg;type=image/jpeg" http://localhost:5080/api/scans
 ```
 
-## USB テザリング時の注意
-- スマホ側で USB テザリングを有効化すると、PC に新しい NIC が増える（`ipconfig` で確認）。
-- Windows ファイアウォールで TCP 5080 の受信を許可する（管理者 PowerShell）:
+## 接続方法とネットワークの注意
+- **USB テザリング**: スマホ側で USB テザリングを有効化すると、PC に新しい NIC が増える（`ipconfig` で確認）。
+- **同じ Wi-Fi / LAN**: スマホと PC を同じネットワークに接続するだけでよい（USB ケーブル不要）。
+  別の PC のブラウザから `http://<サーバーPCのIP>:5080/` を開いても、同じ受信結果をリアルタイムに見られる。
+- どちらの場合も、接続用 QR に載る接続候補（PC の全 IPv4）からアプリが届くものを自動で選ぶ。
+- サーバーは `0.0.0.0:5080` で待ち受ける。Windows ファイアウォールで TCP 5080 の受信を許可する（管理者 PowerShell）:
   `New-NetFirewallRule -DisplayName "ScanMonitor 5080" -Direction Inbound -Protocol TCP -LocalPort 5080 -Action Allow`
-- Android からは `http://<テザリングNICのPC側IP>:5080` を指定する。
+- **セキュリティ**: 送信（`POST /api/scans`）はトークン必須だが、閲覧側（受信一覧・画像・接続用 QR）は認証なし。
+  同じネットワークの誰でも見られるため、検証用途以外では閲覧側の認証追加か待受アドレスの制限を行うこと。
 
 ## ペアリング（アドレス入力不要）
 1. PC でブラウザから `http://localhost:5080/` を開くと、上部に **Android 接続用 QR** が表示される。

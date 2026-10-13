@@ -12,11 +12,20 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
 
 /** 現在フレームで検出中のバーコード。corners は画像（回転補正済み）のピクセル座標。 */
-data class Detection(val value: String, val format: Int, val corners: List<Offset>)
+enum class DetectionStatus { Confirmed, Pending, Invalid }
+
+data class Detection(
+    val value: String,
+    val format: Int,
+    val corners: List<Offset>,
+    val status: DetectionStatus = DetectionStatus.Pending,
+    val reason: String? = null,
+)
 
 /** 検出結果とそれが得られた画像のサイズ（プレビュー表示への座標変換に使う）。 */
 data class DetectionFrame(val detections: List<Detection> = emptyList(), val width: Int = 0, val height: Int = 0)
@@ -58,6 +67,14 @@ fun formatLabel(format: Int): String = when (format) {
 class ScannerViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = ServerSettings(application)
     private val api = ServerApi()
+    private val scanSettingsStore = ScanSettingsStore(application)
+    private val tracker = ConsensusTracker()
+
+    private val _scanSettings = MutableStateFlow(scanSettingsStore.load())
+    val scanSettings: StateFlow<ScanSettings> = _scanSettings
+
+    private val _stats = MutableStateFlow(ScanStats())
+    val stats: StateFlow<ScanStats> = _stats
 
     private val _frame = MutableStateFlow(DetectionFrame())
     val frame: StateFlow<DetectionFrame> = _frame
@@ -105,7 +122,9 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     val isPaired: Boolean get() = settings.load() != null
 
     /**
-     * 1 フレーム分の検出結果を処理する。履歴に新規追加されたコードを返す（呼び出し側が画像を送信する）。
+     * 1 フレーム分の検出結果を処理する（検出ゼロのフレームでも必ず呼ぶ）。
+     * 値の検証と複数フレームでの一致確認を通ったコードだけを「確定」し、履歴に追加する。
+     * 確定したコードを返す（呼び出し側が画像を付けて送信する）。
      * ペアリング用 QR は履歴・送信の対象にせず、接続確認のフローへ回す。
      */
     fun onBarcodes(barcodes: List<Barcode>, width: Int, height: Int): List<Detection> {
@@ -114,22 +133,61 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
             val corners = barcode.cornerPoints ?: return@mapNotNull null
             Detection(value, barcode.format, corners.map { Offset(it.x.toFloat(), it.y.toFloat()) })
         }
-        _frame.value = DetectionFrame(current, width, height)
-        if (current.isEmpty()) return emptyList()
+        val s = _scanSettings.value
 
         val (pairingCodes, scanCodes) = current.partition { PairingParser.isPairing(it.value) }
         pairingCodes.firstNotNullOfOrNull { PairingParser.parse(it.value) }?.let { offerPairing(it) }
-        if (scanCodes.isEmpty()) return emptyList()
 
-        val now = System.currentTimeMillis()
-        val added: List<Detection>
-        synchronized(knownValues) {
-            added = scanCodes.distinctBy { it.value }.filter { knownValues.add(it.value) }
+        val checked = scanCodes.map { it to ValueValidator.check(it.format, it.value, s) }
+        val result = synchronized(knownValues) {
+            val r = tracker.onFrame(
+                entries = checked.associate { (d, reason) -> d.value to (reason == null) },
+                window = s.windowFrames,
+                required = s.effectiveRequired,
+                alreadyConfirmed = { it in knownValues },
+            )
+            knownValues.addAll(r.confirmed)
+            r
         }
+
+        // 画面表示用: 確定済み(緑) / 多数決待ち(黄) / 検証NG(赤)
+        val shown = checked.map { (d, reason) ->
+            val status = when {
+                reason != null -> DetectionStatus.Invalid
+                synchronized(knownValues) { d.value in knownValues } -> DetectionStatus.Confirmed
+                else -> DetectionStatus.Pending
+            }
+            d.copy(status = status, reason = reason)
+        } + pairingCodes.map { it.copy(status = DetectionStatus.Confirmed) }
+        _frame.value = DetectionFrame(shown, width, height)
+
+        if (result.discarded > 0 || result.invalid > 0 || result.confirmed.isNotEmpty()) {
+            _stats.update {
+                it.copy(
+                    confirmed = it.confirmed + result.confirmed.size,
+                    discardedByVote = it.discardedByVote + result.discarded,
+                    rejectedInvalid = it.rejectedInvalid + result.invalid,
+                )
+            }
+        }
+
+        val added = scanCodes.filter { it.value in result.confirmed }.distinctBy { it.value }
         if (added.isEmpty()) return emptyList()
 
+        val now = System.currentTimeMillis()
         _history.value = added.map { ScanItem(it.value, it.format, now) }.asReversed() + _history.value
         return added
+    }
+
+    fun updateScanSettings(change: (ScanSettings) -> ScanSettings) {
+        val updated = change(_scanSettings.value).let { it.copy(enabledFormats = it.enabledFormats + ALWAYS_ON_FORMAT) }
+        _scanSettings.value = updated
+        scanSettingsStore.save(updated)
+        tracker.reset()
+    }
+
+    fun resetStats() {
+        _stats.value = ScanStats()
     }
 
     /** 新規コードを画像と一緒に送信キューへ入れる（接続先が設定済みの場合のみ）。 */
@@ -220,6 +278,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearHistory() {
         synchronized(knownValues) { knownValues.clear() }
+        tracker.reset()
         _history.value = emptyList()
     }
 
