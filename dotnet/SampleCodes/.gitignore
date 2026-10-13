@@ -1,3 +1,5 @@
 bin/
 obj/
-output/
+# 生成物のうち、印刷用の PDF だけをコミット対象にする
+output/*
+!output/sample-codes.pdf
