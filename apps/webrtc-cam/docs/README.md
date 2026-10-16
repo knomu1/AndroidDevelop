@@ -43,6 +43,13 @@ adb install -r apps/webrtc-cam/android/build/outputs/apk/debug/webrtc-cam-debug.
 - 初回だけ、Windows ファイアウォールの許可が要る（下記）。許可範囲は同じサブネットだけで、インターネット側には開かない。
 - 動作確認済み: Wi-Fi 接続のスマホから PC の LAN アドレスへ HTTP 接続でき、同時に 3 つのブラウザタブで受信できた。iPad（Safari）での表示は未確認。
 
+## スマホの縦・横
+- スマホを縦・横（逆向きも）にすると、PC のブラウザの映像も縦長・横長に切り替わる。WebRTC が映像に回転情報を付けて送り、ブラウザが自動で回転して表示する。
+- アプリは `screenOrientation="fullSensor"`。端末の「自動回転」の設定が OFF でも、持ち替えればセンサーに従って回る。
+- 確認結果（Chrome、`user_rotation` で向きを変えて測定）: 縦 0° = 表示 720x1280、横 90° = 1280x720、縦 180° = 720x1280、横 270° = 1280x720。切り替え中も配信は止まらない。画面の「表示サイズ(向き)」で見られる。
+- 上下逆（180°）で映像が正立しているかは目視で確認すること（表示サイズだけでは分からない）。Safari / iPad は未確認。
+- 解像度の指定（例 720p）は向きに関係なく「短辺×長辺」として扱われ、縦のときは 720x1280 で出る。
+
 ## QR を省略して接続する（デバッグビルドのみ、AI / adb からの操作用）
 ```powershell
 adb shell am start -n com.knomu1.webrtccam/.MainActivity --es server_url http://<PC の IP>:5081 --es token <トークン>
@@ -56,7 +63,7 @@ adb shell am start -n com.knomu1.webrtccam/.MainActivity --ez disconnect true   
 ```powershell
 Invoke-RestMethod -Method Post -ContentType application/json -Uri http://127.0.0.1:5081/api/config `
   -Body '{"width":1920,"height":1080,"fps":30,"bitrateKbps":10000,"codec":"H264"}'
-Invoke-RestMethod http://127.0.0.1:5081/api/viewer-stats   # ブラウザが計測した直近の受信統計
+Invoke-RestMethod http://127.0.0.1:5081/api/viewer-stats   # ブラウザが計測した受信統計(stats = 直近、viewers = 視聴者(タブ)ごと)
 ```
 `codec` は `H264` / `VP8` / `VP9` / `AV1`。コーデックを変えると、接続を張り直す（数秒）。
 

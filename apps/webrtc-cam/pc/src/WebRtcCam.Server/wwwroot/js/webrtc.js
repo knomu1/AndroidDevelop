@@ -9,6 +9,7 @@ let statsTimer = null;
 let reconnectTimer = null;
 let prev = null; // 前回の統計(ビットレートなどの差分計算用)
 let disposed = false;
+const clientId = Math.random().toString(36).slice(2, 8); // この画面(タブ)の識別子。統計を視聴者ごとに分けるため
 
 export function start(videoId, ref) {
     dotnet = ref;
@@ -116,6 +117,7 @@ async function collectStats() {
     const jbDelayMs = inbound.jitterBufferEmittedCount > 0
         ? (inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount) * 1000 : 0;
     const stats = {
+        clientId,
         width: inbound.frameWidth ?? 0,
         height: inbound.frameHeight ?? 0,
         fps: Math.round((inbound.framesPerSecond ?? 0) * 10) / 10,

@@ -74,25 +74,31 @@ try
         await relay.RunAsync(socket, role, http.RequestAborted);
     });
 
-    // ブラウザが計測した受信統計(解像度・fps・ビットレート等)。画面表示とは別に、直近の値をログ・取得用に保持する。
-    JsonElement? lastViewerStats = null;
-    var lastViewerStatsAt = DateTimeOffset.MinValue;
+    // ブラウザが計測した受信統計(解像度・fps・ビットレート等)。視聴者(タブ)ごとに直近の値を保持する。
+    // clientId を付けて送る(付けない古い画面は "legacy" として 1 件にまとまる)。
+    var viewerStats = new System.Collections.Concurrent.ConcurrentDictionary<string, (JsonElement Stats, DateTimeOffset At)>();
     var lastLogged = DateTimeOffset.MinValue;
     app.MapPost(WebRtcRoutes.ViewerStats, (JsonElement stats, ILogger<Program> logger) =>
     {
-        lastViewerStats = stats.Clone();
-        lastViewerStatsAt = DateTimeOffset.UtcNow;
-        if (lastViewerStatsAt - lastLogged > TimeSpan.FromSeconds(5))
+        var clientId = stats.TryGetProperty("clientId", out var c) ? c.GetString() ?? "legacy" : "legacy";
+        var now = DateTimeOffset.UtcNow;
+        viewerStats[clientId] = (stats.Clone(), now);
+        if (now - lastLogged > TimeSpan.FromSeconds(5))
         {
-            lastLogged = lastViewerStatsAt;
-            logger.LogInformation("Viewer stats: {Stats}", stats.GetRawText());
+            lastLogged = now;
+            logger.LogInformation("Viewer stats [{Client}]: {Stats}", clientId, stats.GetRawText());
         }
         return Results.NoContent();
     });
-    app.MapGet(WebRtcRoutes.ViewerStats, () => lastViewerStats is { } s
-        ? Results.Json(new { ageMs = (long)(DateTimeOffset.UtcNow - lastViewerStatsAt).TotalMilliseconds, stats = s })
-        : Results.NoContent());
-
+    // 直近に更新された視聴者を stats として返す(従来どおり)。viewers に全視聴者の分を入れる。
+    app.MapGet(WebRtcRoutes.ViewerStats, () =>
+    {
+        if (viewerStats.IsEmpty) return Results.NoContent();
+        var now = DateTimeOffset.UtcNow;
+        var all = viewerStats.Select(kv => new { clientId = kv.Key, ageMs = (long)(now - kv.Value.At).TotalMilliseconds, stats = kv.Value.Stats })
+            .OrderBy(x => x.ageMs).ToList();
+        return Results.Json(new { ageMs = all[0].ageMs, stats = all[0].stats, viewers = all });
+    });
     // 画質設定を API から変更する(ブラウザの操作と同じ config メッセージを Android へ送る)。例:
     //   POST /api/config {"width":1920,"height":1080,"fps":30,"bitrateKbps":10000,"codec":"H264"}
     app.MapPost("/api/config", async (JsonElement config, SignalingRelay relay, CancellationToken ct) =>
