@@ -24,6 +24,11 @@
                     <p>接続候補:</p>
                     <ul>@foreach (var u in _pairing.Urls) { <li>@u</li> }</ul>
                 </div>
+                <div>
+                    <p><b>別の PC / iPad で見る</b><br />同じネットワークのブラウザで、次の URL を開く（または QR を読む）。</p>
+                    <ul>@foreach (var u in _pairing.Urls) { <li><a href="@u/">@u/</a></li> }</ul>
+                    <img class="cv-qr" style="width:160px;height:160px" src="@WebRtcRoutes.ViewerQr?t=@_qrStamp" alt="viewer URL QR" />
+                </div>
             </div>
         </div>
     }

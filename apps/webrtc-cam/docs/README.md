@@ -34,6 +34,15 @@ adb install -r apps/webrtc-cam/android/build/outputs/apk/debug/webrtc-cam-debug.
 ```
 ブラウザで `http://127.0.0.1:5081/` を開き、Android アプリで画面の QR を読む。
 
+## 他の端末（別の PC / iPad）で見る（LAN 内公開）
+同じ LAN にいる端末のブラウザで、サーバーを動かしている PC の URL を開くだけ（例: `http://192.168.11.22:5081/`）。
+- URL はサーバー起動ログ（`Open from other devices on the LAN: ...`）と、画面の「別の PC / iPad で見る」に出る。QR も出るので、iPad ではそれを読めばよい。
+- 起動は `apps/webrtc-cam/pc/start-server.ps1`（PC の電源が入っていて、サーバーが動いている間だけ見られる）。
+- 視聴者は**複数台同時**に見られる（接続ごとに別々にエンコードして送るので、台数が増えるほどスマホの負荷と発熱が増える）。画質設定は全員に共通。
+- 認証は付けていない（LAN 内の検証用）。視聴者側は誰でも見られ、画質も変えられる。Android（送信側）だけトークンが要る。
+- 初回だけ、Windows ファイアウォールの許可が要る（下記）。許可範囲は同じサブネットだけで、インターネット側には開かない。
+- 動作確認済み: Wi-Fi 接続のスマホから PC の LAN アドレスへ HTTP 接続でき、同時に 3 つのブラウザタブで受信できた。iPad（Safari）での表示は未確認。
+
 ## QR を省略して接続する（デバッグビルドのみ、AI / adb からの操作用）
 ```powershell
 adb shell am start -n com.knomu1.webrtccam/.MainActivity --es server_url http://<PC の IP>:5081 --es token <トークン>
@@ -68,12 +77,8 @@ Invoke-RestMethod http://127.0.0.1:5081/api/viewer-stats   # ブラウザが計�
 ## ハマりどころ（原因と対処）
 - **画面ロック中は映像が約 2 秒で止まる**: Android がロック中アプリのカメラ利用を制限する。端末のロックを解除しておく（デバッグビルドは前面表示の設定で回避）。
 - **PC のポート 5080 は別アプリが使うことがある**: このアプリは 5081 を使う（camerastream は 5080）。
-- **Windows ファイアウォールが `WebRtcCam.Server.exe` をブロックする**: 初回起動時の確認画面で許可しないと、Public ネットワークでブロックのルールが作られる。許可するには、管理者権限の PowerShell で次を実行する。
-  ```powershell
-  Remove-NetFirewallRule -DisplayName 'WebRtcCam.Server'
-  New-NetFirewallRule -DisplayName 'WebRtcCam.Server' -Direction Inbound -Action Allow -Profile Any `
-    -Program (Resolve-Path apps\webrtc-cam\pc\src\WebRtcCam.Server\bin\Debug\net10.0\WebRtcCam.Server.exe)
-  ```
+- **Windows ファイアウォールが `WebRtcCam.Server.exe` をブロックする**: 初回起動時の確認画面で許可しないと、Public ネットワークでブロックのルールが作られ、スマホや他の端末から届かない。確認画面で許可し直すか、`apps/webrtc-cam/pc/allow-lan-firewall.ps1` を実行する（管理者権限の確認画面が出る。ブロックのルールを消し、TCP 5081 を同じサブネットだけに許可する）。実行ファイルの場所（`bin\Debug\...`）が変わると、実行ファイル単位のルールは効かなくなるので、ポート単位の許可のほうが安定する。
+- **接続確認の方法**: スマホから PC への到達は、`adb shell "(printf 'GET /api/health HTTP/1.0\r\n\r\n'; sleep 2) | toybox nc -w 4 <PC の IP> 5081"` で確かめられる。
 - ブラウザ用の JavaScript は、Blazor のフィンガープリント機能と干渉しないよう、サーバー側の `wwwroot/js/` に置いている。
 
 ## 今後の候補

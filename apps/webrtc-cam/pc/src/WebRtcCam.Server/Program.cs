@@ -51,6 +51,13 @@ try
         return Results.Content(pairing.RenderQrSvg(info.Payload), "image/svg+xml");
     });
 
+    // 別の PC / iPad でこの画面を開くための URL の QR
+    app.MapGet(WebRtcRoutes.ViewerQr, (HttpRequest request, PairingService pairing) =>
+    {
+        var url = pairing.Build(request.Host.Port ?? 5081).Urls.FirstOrDefault() ?? $"http://{request.Host}";
+        return Results.Content(pairing.RenderQrSvg(url + "/"), "image/svg+xml");
+    });
+
     // シグナリング: sender(Android)はトークン必須、viewer(ブラウザ)は不要(LAN 内の検証用)
     app.Map(WebRtcRoutes.Signaling, async (HttpContext http, SignalingRelay relay, PairingService pairing, ILogger<Program> logger) =>
     {
@@ -98,7 +105,12 @@ try
     app.MapFallbackToFile("index.html", noCacheIndex);
 
     app.Lifetime.ApplicationStarted.Register(() =>
-        Log.Information("WebRtcCam started. Listening on {Urls}", string.Join(", ", app.Urls)));
+    {
+        Log.Information("WebRtcCam started. Listening on {Urls}", string.Join(", ", app.Urls));
+        var pairing = app.Services.GetRequiredService<PairingService>();
+        foreach (var url in pairing.Build(5081).Urls)
+            Log.Information("Open from other devices on the LAN: {Url}/", url);
+    });
 
     app.Run();
 }

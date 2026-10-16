@@ -13,7 +13,7 @@ namespace WebRtcCam.Server;
 public sealed class PairingService
 {
     private static readonly string[] VirtualMarkers =
-        ["Default Switch", "WSL", "VirtualBox", "VMware", "Docker", "Loopback", "Bluetooth"];
+        ["Default Switch", "vEthernet", "WSL", "VirtualBox", "VMware", "Docker", "Loopback", "Bluetooth"];
 
     private readonly ILogger<PairingService> _logger;
     private string _lastCandidates = "";

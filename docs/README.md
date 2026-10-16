@@ -31,6 +31,9 @@ apps/
 | webrtc-cam (WebRtcCam) | 5081 | |
 | （別アプリ）FieldLogExplorer | 5080 | この PC で常駐していることがある。5080 が使えないときは確認する |
 
+## LAN 内の他の端末から見せる
+PC 側アプリは `0.0.0.0` で待ち受けているので、Windows ファイアウォールを許可すれば、同じ LAN の別 PC・iPad のブラウザから `http://<この PC の IP>:<ポート>/` で開ける。手順の例は [webrtc-cam](../apps/webrtc-cam/docs/README.md)。
+
 ## 新しいアプリを追加する手順
 1. `apps/<名前>/` を作り、`android/`（`build.gradle.kts`、`src/main/...`）、必要なら `pc/`、`docs/README.md` を置く。
 2. `settings.gradle.kts` の `androidApps` に `<名前>` を追加する。

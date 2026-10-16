@@ -72,8 +72,12 @@ class WebRtcSession(
     val videoTrack: VideoTrack
 
     private var capturer: CameraVideoCapturer? = null
-    private var pc: PeerConnection? = null
-    private var videoSender: RtpSender? = null
+    /** 視聴者(ブラウザ)ごとに 1 本の接続を持つ。同じカメラ映像を、接続ごとにエンコードして送る。 */
+    private class Peer(val viewerId: String, val pc: PeerConnection) {
+        var sender: RtpSender? = null
+    }
+
+    private val peers = LinkedHashMap<String, Peer>()
     private var statsTask: ScheduledFuture<*>? = null
     private var prevBytes = 0L
     private var prevTimeMs = 0L
@@ -111,10 +115,13 @@ class WebRtcSession(
     /** シグナリングで届いたメッセージを処理する。 */
     fun onSignal(msg: JSONObject) = executor.execute {
         try {
+            val viewerId = msg.optString("viewerId")
             when (msg.getString("type")) {
-                "peer-joined" -> startOffer()
-                "answer" -> pc?.setRemoteDescription(SdpAdapter("setRemote(answer)"), SessionDescription(SessionDescription.Type.ANSWER, msg.getString("sdp")))
-                "candidate" -> pc?.addIceCandidate(
+                "peer-joined" -> startOffer(viewerId)
+                "answer" -> peers[viewerId]?.pc?.setRemoteDescription(
+                    SdpAdapter("setRemote(answer)"), SessionDescription(SessionDescription.Type.ANSWER, msg.getString("sdp"))
+                )
+                "candidate" -> peers[viewerId]?.pc?.addIceCandidate(
                     IceCandidate(msg.optString("sdpMid"), msg.optInt("sdpMLineIndex"), msg.getString("candidate"))
                 )
                 "config" -> applyConfig(
@@ -124,26 +131,27 @@ class WebRtcSession(
                         msg.optString("codec", config.codec),
                     )
                 )
-                "peer-left" -> { closePc(); onState("PC のブラウザが切断しました") }
+                "peer-left" -> { closePeer(viewerId); onState("視聴者 ${peers.size} 台") }
             }
         } catch (e: Exception) {
             Log.w(TAG, "signal handling failed: $msg", e)
         }
     }
 
-    private fun startOffer() {
-        closePc()
+    private fun startOffer(viewerId: String) {
+        closePeer(viewerId)
         val rtcConfig = PeerConnection.RTCConfiguration(emptyList()).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN // 同一 LAN なので STUN/TURN は使わない
         }
-        val connection = factory.createPeerConnection(rtcConfig, observer) ?: return
-        pc = connection
+        val connection = factory.createPeerConnection(rtcConfig, observerFor(viewerId)) ?: return
+        val peer = Peer(viewerId, connection)
+        peers[viewerId] = peer
 
         val transceiver = connection.addTransceiver(
             videoTrack,
             RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY),
         )
-        videoSender = transceiver.sender
+        peer.sender = transceiver.sender
 
         // 指定コーデックを優先する(offer の並び順で、ブラウザはその順に選ぶ)
         val codecs = factory.getRtpSenderCapabilities(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO).codecs
@@ -154,13 +162,13 @@ class WebRtcSession(
             override fun onCreateSuccess(desc: SessionDescription) {
                 connection.setLocalDescription(object : SdpAdapter("setLocal(offer)") {
                     override fun onSetSuccess() {
-                        signaling.send(JSONObject().put("type", "offer").put("sdp", desc.description))
+                        signaling.send(JSONObject().put("type", "offer").put("sdp", desc.description).put("viewerId", viewerId))
                         executor.execute { applyEncoderParams() }
                     }
                 }, desc)
             }
         }, MediaConstraints())
-        onState("接続中…")
+        onState("視聴者 ${peers.size} 台に接続中…")
     }
 
     private fun applyConfig(new: StreamConfig) {
@@ -170,56 +178,71 @@ class WebRtcSession(
         if (old.width != new.width || old.height != new.height || old.fps != new.fps) {
             capturer?.changeCaptureFormat(new.width, new.height, new.fps)
         }
-        if (old.codec != new.codec && pc != null) startOffer() else applyEncoderParams()
+        if (old.codec != new.codec && peers.isNotEmpty()) {
+            // コーデックの切り替えは接続を張り直す
+            peers.keys.toList().forEach { startOffer(it) }
+        } else {
+            applyEncoderParams()
+        }
     }
 
     private fun applyEncoderParams() {
-        val sender = videoSender ?: return
-        val params = sender.parameters
-        if (params.encodings.isEmpty()) return
-        val maxBps = config.bitrateKbps * 1000
-        params.encodings[0].maxBitrateBps = maxBps
-        params.encodings[0].minBitrateBps = maxBps / 2 // 回線が十分ある LAN で、画質が低いまま上がらないのを避ける
-        params.encodings[0].maxFramerate = config.fps
-        // 回線が足りないとき、解像度を保って fps を落とす(画質検証が目的のため)
-        params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
-        sender.setParameters(params)
+        for (peer in peers.values) {
+            val sender = peer.sender ?: continue
+            val params = sender.parameters
+            if (params.encodings.isEmpty()) continue
+            val maxBps = config.bitrateKbps * 1000
+            params.encodings[0].maxBitrateBps = maxBps
+            params.encodings[0].minBitrateBps = maxBps / 2 // 回線が十分ある LAN で、画質が低いまま上がらないのを避ける
+            params.encodings[0].maxFramerate = config.fps
+            // 回線が足りないとき、解像度を保って fps を落とす(画質検証が目的のため)
+            params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+            sender.setParameters(params)
+        }
     }
 
-    private fun closePc() {
+    private fun closePeer(viewerId: String) {
+        peers.remove(viewerId)?.pc?.close()
+        if (peers.isEmpty()) {
+            statsTask?.cancel(false)
+            statsTask = null
+            prevBytes = 0
+        }
+    }
+
+    private fun closeAllPeers() {
         statsTask?.cancel(false)
         statsTask = null
-        pc?.close()
-        pc = null
-        videoSender = null
+        peers.values.forEach { it.pc.close() }
+        peers.clear()
         prevBytes = 0
     }
 
-    private val observer = object : PeerConnection.Observer {
+    private fun observerFor(viewerId: String) = object : PeerConnection.Observer {
         override fun onIceCandidate(c: IceCandidate) {
-            Log.i(TAG, "local candidate: ${c.sdp}")
+            Log.i(TAG, "local candidate [$viewerId]: ${c.sdp}")
             signaling.send(
                 JSONObject().put("type", "candidate").put("candidate", c.sdp)
-                    .put("sdpMid", c.sdpMid).put("sdpMLineIndex", c.sdpMLineIndex)
+                    .put("sdpMid", c.sdpMid).put("sdpMLineIndex", c.sdpMLineIndex).put("viewerId", viewerId)
             )
         }
 
         override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {
-            Log.i(TAG, "connection: $newState")
+            Log.i(TAG, "connection [$viewerId]: $newState")
             onState(
                 when (newState) {
-                    PeerConnection.PeerConnectionState.CONNECTED -> "配信中"
+                    PeerConnection.PeerConnectionState.CONNECTED -> "配信中(視聴者 ${peers.size} 台)"
                     PeerConnection.PeerConnectionState.CONNECTING -> "接続中…"
                     PeerConnection.PeerConnectionState.FAILED -> "接続失敗"
                     PeerConnection.PeerConnectionState.DISCONNECTED -> "切断"
                     else -> newState.name
                 }
             )
-            if (newState == PeerConnection.PeerConnectionState.CONNECTED) executor.execute { startStats() }
+            if (newState == PeerConnection.PeerConnectionState.CONNECTED) executor.execute { if (statsTask == null) startStats() }
         }
 
         override fun onSignalingChange(s: PeerConnection.SignalingState) {}
-        override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) { Log.i(TAG, "ice: $s") }
+        override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) { Log.i(TAG, "ice [$viewerId]: $s") }
         override fun onIceConnectionReceivingChange(b: Boolean) {}
         override fun onIceGatheringChange(s: PeerConnection.IceGatheringState) {}
         override fun onIceCandidatesRemoved(c: Array<out IceCandidate>) {}
@@ -235,7 +258,9 @@ class WebRtcSession(
     }
 
     private fun collectStats() {
-        pc?.getStats { report ->
+        // 統計は、最初の(最も古い)視聴者との接続の値を代表として使う
+        val first = peers.values.firstOrNull()?.pc
+        first?.getStats { report ->
             val outbound = report.statsMap.values.firstOrNull {
                 it.type == "outbound-rtp" && it.members["kind"] == "video"
             } ?: return@getStats
@@ -284,7 +309,7 @@ class WebRtcSession(
     fun release() {
         executor.execute {
             try {
-                closePc()
+                closeAllPeers()
                 capturer?.stopCapture()
                 capturer?.dispose()
                 capturer = null
