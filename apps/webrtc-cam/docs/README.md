@@ -51,6 +51,11 @@ adb install -r apps/webrtc-cam/android/build/outputs/apk/debug/webrtc-cam-debug.
 - 上下逆（180°）で映像が正立しているかは目視で確認すること（表示サイズだけでは分からない）。Safari / iPad は未確認。
 - 解像度の指定（例 720p）は向きに関係なく「短辺×長辺」として扱われ、縦のときは 720x1280 で出る。
 
+## 画面の操作
+- **全画面**: 画面上部の「全画面」ボタン、または映像のダブルクリックで、映像だけを全画面にする。全画面中は右上の「全画面を終了」、Esc、ダブルクリックで戻る。縦横比は保たれ、黒背景で表示する。
+- iPhone の Safari は要素の全画面に対応しないため、映像そのものの全画面表示（OS 標準の画面）になる。iPad は未確認。
+- 動作確認: Node.js の `puppeteer-core` で実際の Chrome を操作して、ページの読み込み（エラーなし）、全画面の開始と終了を確認した。
+
 ## QR を省略して接続する（デバッグビルドのみ、AI / adb からの操作用）
 ```powershell
 adb shell am start -n com.knomu1.webrtccam/.MainActivity --es server_url http://<PC の IP>:5081 --es token <トークン>

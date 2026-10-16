@@ -12,6 +12,7 @@
         <h1>WebRtcCam</h1>
         <span class="cv-badge @(_live ? "live" : "wait")">@StateLabel</span>
         <button @onclick="() => _showPairing = !_showPairing">@(_showPairing ? "接続QRを隠す" : "接続QRを表示")</button>
+        <button @onclick="ToggleFullscreenAsync">全画面</button>
     </div>
 
     @if (_showPairing && _pairing is not null)
@@ -33,7 +34,8 @@
         </div>
     }
 
-    <div class="cv-view">
+    <div class="cv-view" id="videoBox" @ondblclick="ToggleFullscreenAsync">
+        <button class="cv-fs-exit" @onclick="ToggleFullscreenAsync" @onclick:stopPropagation="true">全画面を終了</button>
         <video id="remote" autoplay muted playsinline controls style="max-width:100%;max-height:75vh;background:#000"></video>
     </div>
 
@@ -153,6 +155,11 @@
 
     private static string Get(JsonElement e, string name) =>
         e.TryGetProperty(name, out var p) ? p.ToString() : "-";
+
+    private async Task ToggleFullscreenAsync()
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("toggleFullscreen", "videoBox");
+    }
 
     private async Task ApplyAsync()
     {

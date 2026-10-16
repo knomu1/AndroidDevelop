@@ -25,6 +25,28 @@ export function stop() {
     if (ws) ws.close();
 }
 
+/**
+ * 映像を全画面にする / 戻す。コントロール類を含まない映像だけの全画面にするため、<video> の入れ物を全画面にする。
+ * iPhone の Safari のように要素の全画面に対応しない場合は、<video> 自体の全画面表示にする。
+ */
+export async function toggleFullscreen(containerId) {
+    const box = document.getElementById(containerId);
+    const fsElement = document.fullscreenElement ?? document.webkitFullscreenElement;
+    try {
+        if (fsElement) {
+            await (document.exitFullscreen ?? document.webkitExitFullscreen).call(document);
+        } else if (box?.requestFullscreen) {
+            await box.requestFullscreen();
+        } else if (box?.webkitRequestFullscreen) {
+            box.webkitRequestFullscreen();
+        } else if (video?.webkitEnterFullscreen) {
+            video.webkitEnterFullscreen();
+        }
+    } catch (e) {
+        console.warn("fullscreen failed", e);
+    }
+}
+
 /** Android へ画質設定を送る。codec は "H264" / "VP8" / "VP9" / "AV1"。 */
 export function sendConfig(width, height, fps, bitrateKbps, codec) {
     send({ type: 'config', width, height, fps, bitrateKbps, codec });
