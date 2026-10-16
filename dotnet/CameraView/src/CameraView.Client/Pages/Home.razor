@@ -1,0 +1,157 @@
+@page "/"
+@using CameraView.Contracts
+@implements IAsyncDisposable
+@inject HttpClient Http
+
+<PageTitle>CameraView</PageTitle>
+
+<div class="cv-wrap">
+    <div class="cv-header">
+        <h1>CameraView</h1>
+        @if (_status is { Receiving: true })
+        {
+            <span class="cv-badge live">受信中 @_status.Fps.ToString("0.0") fps</span>
+        }
+        else
+        {
+            <span class="cv-badge wait">待機中</span>
+        }
+        <button @onclick="() => _showPairing = !_showPairing">@(_showPairing ? "接続QRを隠す" : "接続QRを表示")</button>
+    </div>
+
+    @if (_showPairing && _pairing is not null)
+    {
+        <div class="cv-pair">
+            <div class="cv-pair-body">
+                <img class="cv-qr" src="@CameraRoutes.PairingQr?t=@_qrStamp" alt="pairing QR" />
+                <div>
+                    <p>Android アプリでこの QR を読み取ると接続設定が完了し、カメラ映像の送信が始まります。</p>
+                    <p>接続候補:</p>
+                    <ul>@foreach (var u in _pairing.Urls) { <li>@u</li> }</ul>
+                    @if (_pairing.Urls.Count == 0) { <p style="color:#c62828">この PC のネットワークアドレスを取得できません。</p> }
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="cv-view">
+        @if (_status is { TotalFrames: > 0 })
+        {
+            <div class="cv-stage">
+                <img src="@CameraRoutes.Stream?s=@_streamStamp" alt="camera" />
+                @if (_ocr is { Items.Count: > 0 } o)
+                {
+                    <svg viewBox="0 0 @o.ImageWidth @o.ImageHeight" preserveAspectRatio="none">
+                        @foreach (var item in o.Items)
+                        {
+                            <polygon points="@Points(item)" />
+                        }
+                    </svg>
+                    @foreach (var item in o.Items)
+                    {
+                        <div class="cv-label" style="left:@Pct(item.Corners[0].X, o.ImageWidth)%;top:@Pct(item.Corners[0].Y, o.ImageHeight)%">@item.Text</div>
+                    }
+                }
+            </div>
+        }
+        else
+        {
+            <span>カメラ映像はまだ届いていません</span>
+        }
+    </div>
+
+    <div class="cv-ocr">
+        <h2>検出文字列</h2>
+        @if (_ocr is { Items.Count: > 0 } r)
+        {
+            <ol>@foreach (var item in r.Items) { <li>@item.Text</li> }</ol>
+        }
+        else
+        {
+            <p class="cv-meta">文字は検出されていません</p>
+        }
+    </div>
+
+    @if (_status is { TotalFrames: > 0 })
+    {
+        <div class="cv-meta">
+            端末: @_status.DeviceId / @_status.Width x @_status.Height /
+            累計 @_status.TotalFrames フレーム / 最終受信 @_status.LastFrameAt?.ToLocalTime().ToString("HH:mm:ss")
+        </div>
+    }
+</div>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+    private PairingInfo? _pairing;
+    private StatusDto? _status;
+    private bool _showPairing = true;
+    private string _qrStamp = DateTime.Now.Ticks.ToString();
+    private string _streamStamp = DateTime.Now.Ticks.ToString();
+    private bool _hadFrames;
+    private OcrResultDto? _ocr;
+
+    /// <summary>この時間より古い認識結果は、映像と合わなくなるので枠を消す。</summary>
+    private const long OcrExpireMs = 1500;
+
+    private static string Pct(int v, int total) => (v * 100.0 / total).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string Points(OcrItem item) => string.Join(" ", item.Corners.Select(c => $"{c.X},{c.Y}"));
+
+    protected override async Task OnInitializedAsync()
+    {
+        _pairing = await Http.GetFromJsonAsync<PairingInfo>(CameraRoutes.Pairing);
+        _ = PollAsync();
+        _ = PollOcrAsync();
+    }
+
+    private async Task PollAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token))
+            {
+                try
+                {
+                    _status = await Http.GetFromJsonAsync<StatusDto>(CameraRoutes.Status, _cts.Token);
+                    if (_status is { TotalFrames: > 0 } && !_hadFrames)
+                    {
+                        _hadFrames = true;
+                        _showPairing = false;
+                    }
+                }
+                catch (HttpRequestException) { /* サーバー再起動中など。次の周期で再試行 */ }
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task PollOcrAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token))
+            {
+                try
+                {
+                    var r = await Http.GetFromJsonAsync<OcrResultDto>(CameraRoutes.Ocr, _cts.Token);
+                    _ocr = r is { } x && x.AgeMs <= OcrExpireMs ? x : null;
+                }
+                catch (HttpRequestException) { _ocr = null; }
+                catch (System.Text.Json.JsonException) { _ocr = null; } // 結果なし(204 の空本文)
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

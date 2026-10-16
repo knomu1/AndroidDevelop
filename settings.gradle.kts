@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "AndroidApps"
 include(":apps:qrscanner")
+include(":apps:camerastream")
