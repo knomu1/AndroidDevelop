@@ -66,7 +66,9 @@ class MainActivity : ComponentActivity() {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
         }
-        handleDebugIntent(intent)
+        // 画面が作り直されたとき(savedInstanceState あり)は、起動時のインテントを再処理しない。
+        // 再処理すると、向きの変更などのたびに接続/切断が走ってしまう。
+        if (savedInstanceState == null) handleDebugIntent(intent)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
