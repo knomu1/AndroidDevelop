@@ -58,5 +58,12 @@ PC 側（例）: `dotnet run --project apps/<アプリ名>/pc/src/<サーバー>
 - **実機のカメラが約 2 秒で止まる**: 端末が画面ロック中。ロックを解除する。
 - **この PC が突然再起動した（2026-10-17）**: ブルースクリーン（SYSTEM_SERVICE_EXCEPTION、Windows 本体内のエラー）。その際 `.git/refs/heads/main` の中身が空になり、Git が壊れたように見えた。`.git/logs/HEAD`（reflog）で直前のコミット ID を調べ、`.git/refs/heads/main` にその ID を書き戻して復旧した。同様のときは `git fsck` で確認する。
 
+## 開発メモ（再発防止）
+- **画面を閉じる前提の ML Kit 読み取りは、スレッドを包む**: `Executor { try { pool.execute(it) } catch (_: RejectedExecutionException) {} }`。止まったスレッドへ後から結果が届いて落ちるのを防ぐ（qrscanner / webrtc-cam で採用）。
+- **起動時のインテントの再処理に注意**: `onCreate` は画面の作り直しでも呼ばれる。`savedInstanceState == null` のときだけ処理する。
+- **PowerShell で JS / C# のコードを置換するときは、二重引用符の文字列を使わない**: `${...}` が展開されてコードが壊れる。単一引用符か、エディタ用のツールで書き換える（過去にブラウザ側の JS を壊した）。
+- **PowerShell で自作の関数名を付けるとき、組み込みの別名（`rd` = 削除、`cp`、`mv` など）と重ならないようにする**: 別名が関数より優先され、意図しないファイル削除が起きる（過去にドキュメントを削除し、コミットから復元した）。
+- **画面の確認**: ブラウザは Node.js の `puppeteer-core` で実際の Chrome を操作して確認できる。Android は `adb logcat` と `dumpsys` が基本。
+
 ## 実機に入れるときの注意
 - デバッグ署名は PC ごとに異なる。別の PC で入れたアプリは、署名が違うため上書きできない（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）。その場合はアンインストールするか、`debug.keystore` を揃える。
