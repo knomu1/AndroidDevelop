@@ -1,0 +1,6 @@
+﻿src/*/bin/
+src/*/obj/
+src/*/data/
+src/*/logs/
+run.log
+run.log.err

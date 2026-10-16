@@ -1,0 +1,194 @@
+@page "/"
+@using System.Text.Json
+@using WebRtcCam.Contracts
+@implements IAsyncDisposable
+@inject HttpClient Http
+@inject IJSRuntime JS
+
+<PageTitle>WebRtcCam</PageTitle>
+
+<div class="cv-wrap">
+    <div class="cv-header">
+        <h1>WebRtcCam</h1>
+        <span class="cv-badge @(_live ? "live" : "wait")">@StateLabel</span>
+        <button @onclick="() => _showPairing = !_showPairing">@(_showPairing ? "接続QRを隠す" : "接続QRを表示")</button>
+    </div>
+
+    @if (_showPairing && _pairing is not null)
+    {
+        <div class="cv-pair">
+            <div class="cv-pair-body">
+                <img class="cv-qr" src="@WebRtcRoutes.PairingQr?t=@_qrStamp" alt="pairing QR" />
+                <div>
+                    <p>Android アプリでこの QR を読み取ると、WebRTC でカメラ映像が届きます。</p>
+                    <p>接続候補:</p>
+                    <ul>@foreach (var u in _pairing.Urls) { <li>@u</li> }</ul>
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="cv-view">
+        <video id="remote" autoplay muted playsinline controls style="max-width:100%;max-height:75vh;background:#000"></video>
+    </div>
+
+    <div class="cv-ctrl">
+        <label>解像度
+            <select @bind="_res">
+                <option value="640x360">360p</option>
+                <option value="854x480">480p</option>
+                <option value="1280x720">720p</option>
+                <option value="1920x1080">1080p</option>
+                <option value="3840x2160">4K</option>
+            </select>
+        </label>
+        <label>fps
+            <select @bind="_fps">
+                <option value="15">15</option>
+                <option value="24">24</option>
+                <option value="30">30</option>
+                <option value="60">60</option>
+            </select>
+        </label>
+        <label>ビットレート
+            <select @bind="_kbps">
+                <option value="500">0.5 Mbps</option>
+                <option value="1000">1 Mbps</option>
+                <option value="2500">2.5 Mbps</option>
+                <option value="5000">5 Mbps</option>
+                <option value="10000">10 Mbps</option>
+                <option value="20000">20 Mbps</option>
+            </select>
+        </label>
+        <label>コーデック
+            <select @bind="_codec">
+                <option value="H264">H.264</option>
+                <option value="VP8">VP8</option>
+                <option value="VP9">VP9</option>
+                <option value="AV1">AV1</option>
+            </select>
+        </label>
+        <button @onclick="ApplyAsync">適用</button>
+    </div>
+
+    <div class="cv-stats">
+        <div>
+            <h2>ブラウザ(受信)</h2>
+            @if (_viewer is { } v)
+            {
+                <table>
+                    <tr><th>解像度</th><td>@v.GetProperty("width") x @v.GetProperty("height")</td></tr>
+                    <tr><th>fps</th><td>@v.GetProperty("fps")</td></tr>
+                    <tr><th>ビットレート</th><td>@v.GetProperty("bitrateKbps") kbps</td></tr>
+                    <tr><th>コーデック</th><td>@v.GetProperty("codec") / @v.GetProperty("decoder")</td></tr>
+                    <tr><th>ジッタバッファ遅延</th><td>@v.GetProperty("jitterBufferDelayMs") ms</td></tr>
+                    <tr><th>RTT</th><td>@(v.GetProperty("rttMs").ValueKind == JsonValueKind.Null ? "-" : v.GetProperty("rttMs").ToString() + " ms")</td></tr>
+                    <tr><th>パケット損失 / 破棄フレーム / 停止</th><td>@v.GetProperty("packetsLost") / @v.GetProperty("framesDropped") / @v.GetProperty("freezeCount")</td></tr>
+                </table>
+            }
+            else { <p class="cv-meta">映像待ち</p> }
+        </div>
+        <div>
+            <h2>Android(送信)</h2>
+            @if (_sender is { } s)
+            {
+                <table>
+                    <tr><th>解像度</th><td>@Get(s, "width") x @Get(s, "height")</td></tr>
+                    <tr><th>fps</th><td>@Get(s, "fps")</td></tr>
+                    <tr><th>ビットレート</th><td>@Get(s, "bitrateKbps") kbps</td></tr>
+                    <tr><th>コーデック</th><td>@Get(s, "codec")</td></tr>
+                    <tr><th>エンコーダ</th><td>@Get(s, "encoder") @(Get(s, "hardware") == "true" ? "(ハードウェア)" : "")</td></tr>
+                    <tr><th>平均エンコード時間</th><td>@Get(s, "encodeMs") ms</td></tr>
+                    <tr><th>画質制限の理由</th><td>@Get(s, "limitation")</td></tr>
+                    <tr><th>端末温度</th><td>@Get(s, "batteryTempC") ℃</td></tr>
+                </table>
+            }
+            else { <p class="cv-meta">送信側の情報待ち</p> }
+        </div>
+    </div>
+</div>
+
+@code {
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<Home>? _ref;
+    private PairingInfo? _pairing;
+    private bool _showPairing = true;
+    private string _qrStamp = DateTime.Now.Ticks.ToString();
+    private string _state = "";
+    private bool _live;
+    private JsonElement? _viewer;
+    private JsonElement? _sender;
+    private string _res = "1280x720";
+    private int _fps = 30;
+    private int _kbps = 5000;
+    private string _codec = "H264";
+
+    private string StateLabel => _live ? "受信中"
+        : _state switch
+        {
+            "signaling-connected" => "Android 待ち",
+            "pc-connecting" or "pc-new" => "接続中",
+            "sender-left" => "切断(Android 待ち)",
+            _ => "待機中",
+        };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _pairing = await Http.GetFromJsonAsync<PairingInfo>(WebRtcRoutes.Pairing);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _ref = DotNetObjectReference.Create(this);
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "/js/webrtc.js");
+        await _module.InvokeVoidAsync("start", "remote", _ref);
+    }
+
+    private static string Get(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var p) ? p.ToString() : "-";
+
+    private async Task ApplyAsync()
+    {
+        if (_module is null) return;
+        var wh = _res.Split('x');
+        await _module.InvokeVoidAsync("sendConfig", int.Parse(wh[0]), int.Parse(wh[1]), _fps, _kbps, _codec);
+    }
+
+    [JSInvokable]
+    public void OnState(string state)
+    {
+        _state = state;
+        if (state == "pc-connected") { _live = true; _showPairing = false; }
+        if (state is "sender-left" or "signaling-closed" or "pc-disconnected" or "pc-failed" or "pc-closed")
+        {
+            _live = false;
+            _viewer = null;
+            _sender = null;
+        }
+        InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnStats(string json)
+    {
+        _viewer = JsonDocument.Parse(json).RootElement.Clone();
+        InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnSenderStats(string json)
+    {
+        _sender = JsonDocument.Parse(json).RootElement.Clone();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is not null)
+        {
+            try { await _module.InvokeVoidAsync("stop"); await _module.DisposeAsync(); } catch (JSDisconnectedException) { }
+        }
+        _ref?.Dispose();
+    }
+}

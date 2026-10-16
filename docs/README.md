@@ -21,7 +21,15 @@ apps/
 |---|---|---|---|---|
 | qrscanner | 複数の QR / バーコードを同時認識して枠表示。PC へ送って表示 | `:qrscanner` | ScanMonitor | [apps/qrscanner/docs](../apps/qrscanner/docs/README.md) |
 | camerastream | カメラ映像を Wi-Fi で PC へ送信（JPEG）。文字認識（OCR）の枠を重ねて表示 | `:camerastream` | CameraView | [apps/camerastream/docs](../apps/camerastream/docs/README.md) |
-| webrtc-cam | カメラ映像を WebRTC でライブ配信し、画質を検証（計画中） | - | - | [apps/webrtc-cam/docs](../apps/webrtc-cam/docs/README.md) |
+| webrtc-cam | カメラ映像を WebRTC でライブ配信し、画質・遅延・端末負荷を検証 | `:webrtc-cam` | WebRtcCam | [apps/webrtc-cam/docs](../apps/webrtc-cam/docs/README.md) |
+
+## PC 側のポート
+| アプリ | ポート | 備考 |
+|---|---|---|
+| qrscanner (ScanMonitor) | 5080 | |
+| camerastream (CameraView) | 5080 | 同時には起動できない |
+| webrtc-cam (WebRtcCam) | 5081 | |
+| （別アプリ）FieldLogExplorer | 5080 | この PC で常駐していることがある。5080 が使えないときは確認する |
 
 ## 新しいアプリを追加する手順
 1. `apps/<名前>/` を作り、`android/`（`build.gradle.kts`、`src/main/...`）、必要なら `pc/`、`docs/README.md` を置く。
@@ -41,6 +49,11 @@ apps/
 adb install -r apps/<アプリ名>/android/build/outputs/apk/debug/<アプリ名>-debug.apk
 ```
 PC 側（例）: `dotnet run --project apps/<アプリ名>/pc/src/<サーバー> --launch-profile http`
+
+## トラブルシュート（この PC / 実機で起きたこと）
+- **PC のサーバーに実機から届かない**: Windows ファイアウォールが、実行ファイルごとに「ブロック」のルールを作っていることがある（初回起動の確認画面で許可しなかった場合）。管理者権限で許可ルールに直す（手順は [webrtc-cam のドキュメント](../apps/webrtc-cam/docs/README.md)）。応急処置は `adb reverse tcp:<ポート> tcp:<ポート>`。
+- **実機のカメラが約 2 秒で止まる**: 端末が画面ロック中。ロックを解除する。
+- **この PC が突然再起動した（2026-10-17）**: ブルースクリーン（SYSTEM_SERVICE_EXCEPTION、Windows 本体内のエラー）。その際 `.git/refs/heads/main` の中身が空になり、Git が壊れたように見えた。`.git/logs/HEAD`（reflog）で直前のコミット ID を調べ、`.git/refs/heads/main` にその ID を書き戻して復旧した。同様のときは `git fsck` で確認する。
 
 ## 実機に入れるときの注意
 - デバッグ署名は PC ごとに異なる。別の PC で入れたアプリは、署名が違うため上書きできない（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）。その場合はアンインストールするか、`debug.keystore` を揃える。
