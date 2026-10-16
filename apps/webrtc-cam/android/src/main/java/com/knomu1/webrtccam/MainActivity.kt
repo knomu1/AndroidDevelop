@@ -52,7 +52,9 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 class MainActivity : ComponentActivity() {
     private val vm: StreamViewModel by viewModels()
@@ -157,7 +159,15 @@ private fun ScanScreen(vm: StreamViewModel, message: String) {
     val controller = remember { LifecycleCameraController(context) }
 
     DisposableEffect(lifecycleOwner, controller) {
-        val executor = Executors.newSingleThreadExecutor()
+        val pool = Executors.newSingleThreadExecutor()
+        // QR を読み取ると、この画面がすぐ閉じられて pool が停止する。その後に ML Kit が結果を通知しても
+        // RejectedExecutionException で落ちないよう、停止後に届いたタスクは握りつぶす。
+        val executor = Executor { task ->
+            try {
+                pool.execute(task)
+            } catch (_: RejectedExecutionException) {
+            }
+        }
         val scanner = BarcodeScanning.getClient(
             BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
         )
@@ -180,7 +190,7 @@ private fun ScanScreen(vm: StreamViewModel, message: String) {
             controller.unbind()
             controller.clearImageAnalysisAnalyzer()
             scanner.close()
-            executor.shutdown()
+            pool.shutdown()
         }
     }
 
