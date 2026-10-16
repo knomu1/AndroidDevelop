@@ -15,5 +15,9 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "AndroidApps"
-include(":apps:qrscanner")
-include(":apps:camerastream")
+// 1 アプリ = apps/<名前>/ 配下に android/（Gradle モジュール）、pc/（.NET）、docs/ をまとめる
+val androidApps = listOf("qrscanner", "camerastream")
+androidApps.forEach { name ->
+    include(":$name")
+    project(":$name").projectDir = file("apps/$name/android")
+}

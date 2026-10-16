@@ -5,7 +5,7 @@ using ZXing;
 using ZXing.Common;
 
 // 読み取りテスト用のサンプル QR / バーコードを 1 枚の A4 PDF に出力する。
-// 使い方: dotnet run --project dotnet/SampleCodes [出力先PDF]
+// 使い方: dotnet run --project apps/qrscanner/tools/SampleCodes [出力先PDF]
 // PDF 化には Google Chrome（ヘッドレス）を使う。
 
 var samples = new Sample[]

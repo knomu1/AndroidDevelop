@@ -1,10 +1,10 @@
-﻿# ScanMonitor（検証用 .NET アプリ）
+# ScanMonitor（検証用 .NET アプリ）
 
 Android アプリが読み取ったバーコードの「画像 + データ」を受信し、ブラウザへリアルタイム表示する検証用システム。
 
 ## 構成
 ```
-dotnet/ScanMonitor/
+apps/qrscanner/pc/
 ├─ ScanMonitor.sln
 └─ src/
     ├─ ScanMonitor.Server/     # ASP.NET Core: 受信API + SignalR + Blazor WASM のホスト + Serilog
@@ -32,7 +32,7 @@ Blazor  --GET /api/images/{id} (画像本体)---------------------------> Server
 
 ## 起動
 ```
-cd dotnet/ScanMonitor
+cd apps/qrscanner/pc
 dotnet run --project src/ScanMonitor.Server
 ```
 - 画面: http://localhost:5080/
