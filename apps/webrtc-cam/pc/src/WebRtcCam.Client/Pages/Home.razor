@@ -83,6 +83,7 @@
             {
                 <table>
                     <tr><th>解像度</th><td>@v.GetProperty("width") x @v.GetProperty("height")</td></tr>
+                    <tr><th>表示サイズ(向き)</th><td>@v.GetProperty("displayWidth") x @v.GetProperty("displayHeight") (@(v.GetProperty("displayWidth").GetInt32() >= v.GetProperty("displayHeight").GetInt32() ? "横" : "縦"))</td></tr>
                     <tr><th>fps</th><td>@v.GetProperty("fps")</td></tr>
                     <tr><th>ビットレート</th><td>@v.GetProperty("bitrateKbps") kbps</td></tr>
                     <tr><th>コーデック</th><td>@v.GetProperty("codec") / @v.GetProperty("decoder")</td></tr>

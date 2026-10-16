@@ -129,6 +129,9 @@ async function collectStats() {
         jitterBufferDelayMs: Math.round(jbDelayMs),
         rttMs: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
         freezeCount: inbound.freezeCount ?? 0,
+        // 画面に実際に表示されている映像の向き・大きさ(スマホを縦横にすると、ここが入れ替わる)
+        displayWidth: video?.videoWidth ?? 0,
+        displayHeight: video?.videoHeight ?? 0,
         path: pair ? describePath(cands[pair.localCandidateId], cands[pair.remoteCandidateId]) : '',
     };
     dotnet.invokeMethodAsync('OnStats', JSON.stringify(stats));
