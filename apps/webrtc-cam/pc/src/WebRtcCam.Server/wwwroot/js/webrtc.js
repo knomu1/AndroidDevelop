@@ -89,6 +89,12 @@ function closePc() {
     if (video) video.srcObject = null;
 }
 
+/** 選ばれた経路(ローカル/リモートの IP・ポート・種別)を文字列にする。接続できないときの切り分け用。 */
+function describePath(local, remote) {
+    const f = (c) => c ? `${c.address ?? '?'}:${c.port ?? ''} (${c.candidateType ?? ''}/${c.protocol ?? ''})` : '?';
+    return `${f(local)} <-> ${f(remote)}`;
+}
+
 async function collectStats() {
     if (!pc) return;
     const report = await pc.getStats();
@@ -123,7 +129,7 @@ async function collectStats() {
         jitterBufferDelayMs: Math.round(jbDelayMs),
         rttMs: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
         freezeCount: inbound.freezeCount ?? 0,
-        path: pair ? ${cands[pair.localCandidateId]?.address ?? '?'}:() <-> :(/) : '',
+        path: pair ? describePath(cands[pair.localCandidateId], cands[pair.remoteCandidateId]) : '',
     };
     dotnet.invokeMethodAsync('OnStats', JSON.stringify(stats));
     fetch('/api/viewer-stats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(stats) }).catch(() => { });
